@@ -551,6 +551,11 @@
                     "type": "boolean",
                     "description": "Run advanced analysis for targeted methylation kits with enrichment of specific regions",
                     "fa_icon": "fas fa-fast-forward"
+                },
+                "variant_calling": {
+                    "type": "boolean",
+                    "description": "Run variant calling from bisulfite alignments",
+                    "fa_icon": "fas fa-fast-forward"
                 }
             },
             "fa_icon": "fas fa-fast-forward"
