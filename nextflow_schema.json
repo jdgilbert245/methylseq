@@ -553,15 +553,27 @@
                     "fa_icon": "fas fa-fast-forward"
                 },
                 "variant_calling": {
-                    "type": "boolean",
+                    "type": "string",
                     "description": "Run variant calling from bisulfite alignments",
+                    "enum": ["gatk", "bssnper2"],
                     "fa_icon": "fas fa-fast-forward"
                 },
                 "save_masked_bam": {
                     "type": "boolean",
                     "description": "Save bisulfite-masked BAM from REVELIO to results directory",
                     "fa_icon": "fas fa-fast-forward"
+                },
+                "save_gvcfs": {
+                    "type": "boolean",
+                    "description": "Save each sample's gvcf to results dir",
+                    "fa_icon": "fas fa-fast-forward"
+                },
+                "subsample_fastqs": {
+                    "type": "integer",
+                    "description": "Use fq/subsample to select n random reads. n is the argument supplied",
+                    "fa_icon": "fas fa-fast-forward"
                 }
+
             },
             "fa_icon": "fas fa-fast-forward"
         },
