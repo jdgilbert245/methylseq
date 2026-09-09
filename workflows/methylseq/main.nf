@@ -86,6 +86,8 @@ workflow METHYLSEQ {
     def run_masking = 'gatk' in callers || params.save_masked_bam
     // def run_masking = params.variant_calling || params.save_masked_bam
     def run_subsampling = params.subsample_fastqs != null && params.subsample_fastqs > 0
+    def excluded = params.exclude_contigs ? params.exclude_contigs.split(',') as List : []
+
 
     //
     // Branch channels from input samplesheet channel
@@ -490,14 +492,25 @@ workflow METHYLSEQ {
         //
         // MODULE: gatk genomics DB import
         //
+        ch_intervals = ch_fasta_index
+            .map { meta, fai -> fai }
+            .splitCsv(sep: '\t')
+            .map { row -> row[0] }
+            .filter { !(it in excluded) }
+            .collectFile(name: 'genome.intervals', newLine: true)
+
         ch_gendb_input = GATK4_HAPLOTYPECALLER.out.vcf
-            .join(GATK4_HAPLOTYPECALLER.out.tbi)                        // pair each sample's vcf with its tbi by meta key -> [ meta, vcf, tbi ]
-            .map { meta, vcf, tbi -> [ vcf, tbi ] }                     // drop per-sample meta, keep files only
-            .collect()                                                   // wait for all samples, emit flat list [ vcf1, tbi1, vcf2, tbi2, ... ]
+            .join(GATK4_HAPLOTYPECALLER.out.tbi)
+            .map { meta, vcf, tbi -> [ vcf, tbi ] }
+            .collect()
             .map { files ->
-                def vcfs = files.collate(2).collect { it[0] }           // group into pairs, extract vcfs
-                def tbis = files.collate(2).collect { it[1] }           // group into pairs, extract tbis
-                [ [id: 'joint'], vcfs, tbis, [], "chr", [] ]               // "chr" is the name of the interval in the test data. synthetic meta and wspace empty
+                def vcfs = files.collate(2).collect { it[0] }
+                def tbis = files.collate(2).collect { it[1] }
+                [ [id: 'joint'], vcfs, tbis ]
+            }
+            .combine(ch_intervals)
+            .map { meta, vcfs, tbis, intervals ->
+                [ meta, vcfs, tbis, intervals, [], [] ]
             }
 
         GATK4_GENOMICSDBIMPORT(
@@ -529,12 +542,12 @@ workflow METHYLSEQ {
 
         // Sort and merge joint genotype calls 
 
-        BCFTOOLS_SORT(GATK4_GENOTYPEGVCFS.out.vcf)
-        ch_joint_vcf  = BCFTOOLS_SORT.out.vcf
+        // BCFTOOLS_SORT(GATK4_GENOTYPEGVCFS.out.vcf)
+        // ch_joint_vcf  = BCFTOOLS_SORT.out.vcf
 
         // Merge scatter/gather vcfs & index
         // Rework meta for variantscalled.csv and annotation tools
-        GATK4_MERGEVCFS(ch_joint_vcf, ch_fasta_dict)
+        // GATK4_MERGEVCFS(GATK4_GENOTYPEGVCFS.out.vcf, ch_fasta_dict)
 
 
 

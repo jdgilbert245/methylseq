@@ -572,6 +572,16 @@
                     "type": "integer",
                     "description": "Use fq/subsample to select n random reads. n is the argument supplied",
                     "fa_icon": "fas fa-fast-forward"
+                },
+                "exclude_contigs": {
+                    "type": "string",
+                    "description": "contigs (intervals) to exclude from variant calling",
+                    "fa_icon": "fas fa-fast-forward"
+                },
+                "all_sites": {
+                    "type": "string",
+                    "description": "whether to include all sites in the joint.vcf, or only variant sites. To run, add `--all_sites` to the CL command",
+                    "fa_icon": "fas fa-fast-forward"
                 }
 
             },
