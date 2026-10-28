@@ -24,6 +24,7 @@ include { validateInputSamplesheet      } from '../../subworkflows/local/utils_n
 include { BAM_TAPS_CONVERSION           } from '../../subworkflows/nf-core/bam_taps_conversion'
 include { BAM_METHYLDACKEL              } from '../../subworkflows/nf-core/bam_methyldackel/main'
 include { TARGETED_SEQUENCING           } from '../../subworkflows/local/targeted_sequencing'
+include { SAMTOOLS_CALMD                } from '../../modules/nf-core/samtools/calmd/main'
 
 /*
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -59,6 +60,7 @@ workflow METHYLSEQ {
     ch_qualimap      = channel.empty()
     ch_preseq        = channel.empty()
     ch_multiqc_files = channel.empty()
+    ch_bam_calmd     = channel.empty()
 
     //
     // Branch channels from input samplesheet channel
@@ -396,6 +398,30 @@ workflow METHYLSEQ {
         ch_multiqc_report = channel.empty()
     }
 
+
+    //
+    // MODULE: samtools calmd
+    //
+    if (params.variant_calling) {
+
+        ch_calmd_inputs = ch_bam
+            .combine(ch_fasta)
+            .combine(ch_fasta_index)
+            .multiMap { meta, bam, _meta_fasta, fasta, _meta_fai, fai ->
+                bam:   [ meta, bam ]
+                fasta: [ meta, fasta, fai ]
+            }
+        
+        SAMTOOLS_CALMD (
+            ch_calmd_inputs.bam,
+            ch_calmd_inputs.fasta
+        )
+
+        ch_bam_calmd = SAMTOOLS_CALMD.out.bam
+
+    }
+
+
     emit:
     bam            = ch_bam                      // channel: [ val(meta), path(bam) ]
     bai            = ch_bai                      // channel: [ val(meta), path(bai) ]
@@ -408,6 +434,7 @@ workflow METHYLSEQ {
     preseq         = ch_preseq                   // channel: [ val(meta), path(preseq) ]
     multiqc_report = ch_multiqc_report            // channel: [ path(multiqc_report.html )  ]
     versions       = ch_versions                 // channel: [ path(versions.yml) ]
+    bam_calmd      = ch_bam_calmd                // channel: [ val(meta), path(bam) ]
 }
 
 /*
