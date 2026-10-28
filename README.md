@@ -21,6 +21,8 @@
 
 ## Introduction
 
+> **This is a fork of [nf-core/methylseq](https://github.com/nf-core/methylseq)** that adds SNP calling from bisulfite-seq data (RRBS and WGBS). Aligned reads are processed with `samtools calmd` and REVELIO (bisulfite masking), then variants are called per sample with GATK HaplotypeCaller and joint-genotyped across samples. Enable it with `--variant_calling gatk`. Only GATK is supported and tested. See the [usage](docs/usage.md#variant-calling-from-bisulfite-alignments-fork-addition) and [output](docs/output.md#variant-calling) docs.
+
 **nf-core/methylseq** is a bioinformatics analysis pipeline used for Methylation (Bisulfite) sequencing data. It pre-processes raw data from FastQ inputs, aligns the reads and performs extensive quality-control on the results.
 
 ![nf-core/methylseq metro map](docs/images/4.2.0_metromap.png)
