@@ -11,6 +11,7 @@
 - [Workflow: Bismark](#workflow-bismark)
 - [Workflow: BWA-Meth](#workflow-bwa-meth)
 - [Workflow: BWA-MEM + TAPS](#workflow-bwa-mem-taps-tet-assisted-pyridine-borane-sequencing)
+- [Workflow: Variant Calling](#workflow-variant-calling)
 - [Targeted sequencing (optional)](#targeted-sequencing-optional)
 - [Samplesheet input](#samplesheet-input)
 - [Running the pipeline](#running-the-pipeline)
@@ -121,6 +122,51 @@ nextflow run nf-core/methylseq --aligner bwameth --use_mem2 --profile gpu --inpu
 ### Workflow: BWA-MEM + TAPS (TET-Assisted Pyridine borane Sequencing)
 
 The pipeline supports **TAPS data analysis**, which uses a different approach to detect DNA methylation compared to traditional bisulfite sequencing. TAPS preserves the original DNA sequence while converting methylated cytosines to thymine, making it compatible with standard aligners.
+
+### Workflow: Variant Calling
+
+**Variant calling from bisulfite alignments (fork addition)**
+
+This fork adds SNP calling from bisulfite-seq data (RRBS and WGBS). Bisulfite conversion turns unmethylated C into T, which can look like a C>T variant. To avoid calling these as SNPs, aligned reads are masked before variant calling.
+
+GATK is the only variant caller supported and tested. Variant calling has not been validated with `--aligner bwamem` or `--taps`, where the conversion chemistry differs from bisulfite, so the masking step may not be appropriate.
+
+Variant calling runs on the final aligned (and, unless skipped, deduplicated) BAMs. It runs these steps:
+
+1. `samtools calmd` recalculates the MD and NM tags against the reference.
+2. REVELIO masks bisulfite-affected bases in the reads.
+3. Read groups are added to the masked BAMs and the BAMs are indexed.
+4. GATK HaplotypeCaller calls each sample, producing a per-sample gVCF.
+5. GATK GenomicsDBImport and GenotypeGVCFs joint-genotype all samples in the samplesheet into a single VCF.
+
+Variant calling is off by default. Enable it with `--variant_calling`:
+ 
+```bash
+nextflow run jdgilbert245/methylseq \
+    --input samplesheet.csv \
+    --outdir <OUTDIR> \
+    --genome GRCh38 \
+    --aligner bismark \
+    --rrbs \
+    --variant_calling gatk \
+    -profile <docker/singularity/conda/institute>
+```
+
+### Parameters
+Added quite a lot of new parameters to facilitate SNP calling:
+ 
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `--variant_calling` | string | Variant caller to run on the bisulfite alignments. Only `gatk` is implemented; other values are not supported. |
+| `--save_masked_bam` | boolean | Save the REVELIO-masked BAMs. Also runs calmd and REVELIO if `--variant_calling` is not set, so you can produce masked BAMs without calling variants. |
+| `--save_gvcfs` | boolean | Save each sample's gVCF. |
+| `--exclude_contigs` | string | Comma-separated contig names to leave out of joint genotyping, matching the names in the FASTA index. Example: `--exclude_contigs chrX,chrY,chrM`. This only affects joint genotyping; HaplotypeCaller still runs on every contig, so it does not reduce per-sample calling time. |
+| `--all_sites` | flag | Include non-variant sites in the joint VCF as well as variant sites, which makes the file much larger. Add `--all_sites` to the command with no value. |
+| `--subsample_fastqs` | integer | Randomly subsample *n* reads from each sample with `fq subsample`. |
+ 
+> **`--subsample_fastqs` applies to the whole run, not just variant calling.** Subsampling happens straight after FastQ concatenation, so trimming, alignment, QC and methylation calls all use the subsampled reads. The subsampling seed is fixed (21), so repeated runs select the same reads. It is mainly useful for testing how SNP calling behaves at lower depth.
+ 
+
 
 #### TAPS vs Bisulfite Sequencing
 
