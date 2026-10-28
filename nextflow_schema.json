@@ -556,6 +556,11 @@
                     "type": "boolean",
                     "description": "Run variant calling from bisulfite alignments",
                     "fa_icon": "fas fa-fast-forward"
+                },
+                "save_masked_bam": {
+                    "type": "boolean",
+                    "description": "Save bisulfite-masked BAM from REVELIO to results directory",
+                    "fa_icon": "fas fa-fast-forward"
                 }
             },
             "fa_icon": "fas fa-fast-forward"

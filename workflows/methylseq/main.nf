@@ -25,6 +25,8 @@ include { BAM_TAPS_CONVERSION           } from '../../subworkflows/nf-core/bam_t
 include { BAM_METHYLDACKEL              } from '../../subworkflows/nf-core/bam_methyldackel/main'
 include { TARGETED_SEQUENCING           } from '../../subworkflows/local/targeted_sequencing'
 include { SAMTOOLS_CALMD                } from '../../modules/nf-core/samtools/calmd/main'
+include { REVELIO                       } from '../../modules/local/revelio/main'
+include { SAMTOOLS_FAIDX                }  from '../../modules/nf-core/samtools/faidx/main'
 
 /*
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -61,6 +63,12 @@ workflow METHYLSEQ {
     ch_preseq        = channel.empty()
     ch_multiqc_files = channel.empty()
     ch_bam_calmd     = channel.empty()
+    ch_bai_calmd     = channel.empty()
+    ch_bam_masked    = channel.empty()
+
+    // def callers     = params.variant_calling ? params.variant_calling.split(',')*.trim() as Set : [] as Set
+    // def run_masking = 'gatk' in callers || params.save_masked_bam
+    def run_masking = params.variant_calling || params.save_masked_bam
 
     //
     // Branch channels from input samplesheet channel
@@ -338,6 +346,67 @@ workflow METHYLSEQ {
         )
 
     //
+    // MODULE: samtools calmd
+    //
+    if (run_masking) {
+
+        SAMTOOLS_FAIDX (
+            ch_fasta,
+            [[:], []],
+            false
+        )
+
+        ch_fasta_index = SAMTOOLS_FAIDX.out.fai
+
+        ch_calmd_inputs = ch_bam
+            .combine(ch_fasta)
+            .combine(ch_fasta_index)
+            .multiMap { meta, bam, _meta_fasta, fasta, _meta_fai, fai ->
+                bam:   [ meta, bam ]
+                fasta: [ meta, fasta, fai ]
+            }
+        
+        SAMTOOLS_CALMD (
+            ch_calmd_inputs.bam,
+            ch_calmd_inputs.fasta
+        )
+
+        ch_bam_calmd = SAMTOOLS_CALMD.out.bam
+
+    }
+
+
+    //
+    // MODULE: samtools index
+    //
+    if (run_masking) {
+        
+        SAMTOOLS_INDEX (
+            ch_bam_calmd
+        )
+
+        ch_bai_calmd = SAMTOOLS_INDEX.out.bai
+
+    }
+
+    //
+    // MODULE: revelio
+    //
+    if (run_masking) {
+        
+        ch_revelio_input = ch_bam_calmd.join(ch_bai_calmd)
+
+        REVELIO (
+            ch_revelio_input
+        )
+
+        ch_bam_masked = REVELIO.out.masked_bam
+
+    }
+
+
+
+    //
     // MODULE: MultiQC
     //
     if (!params.skip_multiqc) {
@@ -399,29 +468,6 @@ workflow METHYLSEQ {
     }
 
 
-    //
-    // MODULE: samtools calmd
-    //
-    if (params.variant_calling) {
-
-        ch_calmd_inputs = ch_bam
-            .combine(ch_fasta)
-            .combine(ch_fasta_index)
-            .multiMap { meta, bam, _meta_fasta, fasta, _meta_fai, fai ->
-                bam:   [ meta, bam ]
-                fasta: [ meta, fasta, fai ]
-            }
-        
-        SAMTOOLS_CALMD (
-            ch_calmd_inputs.bam,
-            ch_calmd_inputs.fasta
-        )
-
-        ch_bam_calmd = SAMTOOLS_CALMD.out.bam
-
-    }
-
-
     emit:
     bam            = ch_bam                      // channel: [ val(meta), path(bam) ]
     bai            = ch_bai                      // channel: [ val(meta), path(bai) ]
@@ -435,6 +481,8 @@ workflow METHYLSEQ {
     multiqc_report = ch_multiqc_report            // channel: [ path(multiqc_report.html )  ]
     versions       = ch_versions                 // channel: [ path(versions.yml) ]
     bam_calmd      = ch_bam_calmd                // channel: [ val(meta), path(bam) ]
+    bai_calmd      = ch_bai_calmd                // channel: [ val(meta), path(bam) ]
+    bam_masked     = ch_bam_masked                // channel: [ val(meta), path(bam) ]
 }
 
 /*
