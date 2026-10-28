@@ -25,6 +25,7 @@ The pipeline is built using [Nextflow](https://www.nextflow.io/) and processes d
 - [HS Metrics](#hs-metrics) - Assessing performance on target-capture sequencing experiments [OPTIONAL]
 - [Reference Genome Preparation](#reference-genome-preparation) - Preparing indices for alignment [OPTIONAL]
 - [MultiQC](#multiqc) - Aggregate report describing results and QC from the whole pipeline
+- [Variant Calling](#variant-calling) - Outputs if variant calling arm is used
 - [Pipeline information](#pipeline-information) - Report metrics generated during the workflow execution
 
 ### Example output directories of nf-core/methylseq `-test` profile run
@@ -354,6 +355,42 @@ Note that these are predictive numbers only, not absolute. The MultiQC plot can 
 
 - `sample_ccurve.txt`
   - This file contains plot values for the complexity curve, plotted in the MultiQC report.
+
+### Variant Calling
+
+If `--variant_calling gatk` is set, the pipeline calls SNPs from the bisulfite alignments. See the [usage documentation](usage.md#workflow-variant-calling) for the steps involved.
+ 
+#### Joint genotypes
+ 
+All samples in the samplesheet are joint-genotyped together.
+ 
+**Output directory: `results/gatk4/`**
+ 
+- `joint.vcf.gz`
+  - Joint-genotyped variants across all samples. Contains variant sites only, unless `--all_sites` is set.
+- `joint.vcf.gz.tbi`
+  - Index for the joint VCF.
+
+#### Per-sample gVCFs
+ 
+Only saved if `--save_gvcfs` is set.
+ 
+**Output directory: `results/gatk/gvcfs/`**
+ 
+- `sample.vcf.gz` *(filename TBC)*
+  - GATK HaplotypeCaller gVCF for the sample.
+- `sample.vcf.gz.tbi` *(filename TBC)*
+  - Index for the gVCF.
+
+#### Masked BAMs
+ 
+Only saved if `--save_masked_bam` is set. Can be used without `--variant_calling`.
+ 
+**Output directory: `results/masked_bam/`**
+ 
+- `sample*.bam` *(filename TBC)*
+  - Aligned reads after `samtools calmd` and bisulfite masking with REVELIO.
+
 
 ### MultiQC
 
