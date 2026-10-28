@@ -16,6 +16,7 @@ include { FASTQ_ALIGN_DEDUP_BWAMETH     } from '../../subworkflows/nf-core/fastq
 include { FASTQ_ALIGN_DEDUP_BWAMEM      } from '../../subworkflows/nf-core/fastq_align_dedup_bwamem/main'
 include { PICARD_MARKDUPLICATES         } from '../../modules/nf-core/picard/markduplicates/main'
 include { PICARD_ADDORREPLACEREADGROUPS } from '../../modules/nf-core/picard/addorreplacereadgroups/main'
+include { PICARD_CREATESEQUENCEDICTIONARY } from '../../modules/nf-core/picard/createsequencedictionary/main'
 include { SAMTOOLS_INDEX                } from '../../modules/nf-core/samtools/index/main'
 include { paramsSummaryMultiqc          } from '../../subworkflows/nf-core/utils_nfcore_pipeline'
 include { softwareVersionsToYAML        } from '../../subworkflows/nf-core/utils_nfcore_pipeline'
@@ -24,9 +25,20 @@ include { validateInputSamplesheet      } from '../../subworkflows/local/utils_n
 include { BAM_TAPS_CONVERSION           } from '../../subworkflows/nf-core/bam_taps_conversion'
 include { BAM_METHYLDACKEL              } from '../../subworkflows/nf-core/bam_methyldackel/main'
 include { TARGETED_SEQUENCING           } from '../../subworkflows/local/targeted_sequencing'
+
+// added for SNP calling
 include { SAMTOOLS_CALMD                } from '../../modules/nf-core/samtools/calmd/main'
 include { REVELIO                       } from '../../modules/local/revelio/main'
 include { SAMTOOLS_FAIDX                }  from '../../modules/nf-core/samtools/faidx/main'
+include { GATK4_HAPLOTYPECALLER          }  from '../../modules/nf-core/gatk4/haplotypecaller/main'
+include { GATK4_GENOMICSDBIMPORT         }  from '../../modules/nf-core/gatk4/genomicsdbimport/main'
+include { GATK4_GENOTYPEGVCFS           }  from '../../modules/nf-core/gatk4/genotypegvcfs/main'
+include { GATK4_MERGEVCFS               } from '../../modules/nf-core/gatk4/mergevcfs/main'
+include { BCFTOOLS_SORT                 } from '../../modules/nf-core/bcftools/sort/main'
+include { SAMTOOLS_INDEX as SAMTOOLS_INDEX_GATK } from '../../modules/nf-core/samtools/index/main'
+include { FQ_SUBSAMPLE                  } from '../../modules/nf-core/fq/subsample/main'
+
+
 
 /*
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -65,10 +77,17 @@ workflow METHYLSEQ {
     ch_bam_calmd     = channel.empty()
     ch_bai_calmd     = channel.empty()
     ch_bam_masked    = channel.empty()
+    ch_bai_masked    = channel.empty()
+    ch_fasta_dict    = channel.empty()
+    ch_sample_vcf    = channel.empty()
+    ch_gendb_input   = channel.empty()
 
-    // def callers     = params.variant_calling ? params.variant_calling.split(',')*.trim() as Set : [] as Set
-    // def run_masking = 'gatk' in callers || params.save_masked_bam
-    def run_masking = params.variant_calling || params.save_masked_bam
+    def callers     = params.variant_calling ? params.variant_calling.split(',')*.trim() as Set : [] as Set
+    def run_masking = 'gatk' in callers || params.save_masked_bam
+    // def run_masking = params.variant_calling || params.save_masked_bam
+    def run_subsampling = params.subsample_fastqs != null && params.subsample_fastqs > 0
+    def excluded = params.exclude_contigs ? params.exclude_contigs.split(',') as List : []
+
 
     //
     // Branch channels from input samplesheet channel
@@ -89,6 +108,17 @@ workflow METHYLSEQ {
     )
     ch_fastq    = CAT_FASTQ.out.reads.mix(ch_samplesheet.single)
     ch_versions = ch_versions.mix(CAT_FASTQ.out.versions)
+
+    //
+    // MODULE: Concatenate FastQ files from same sample if required
+    //
+    if (run_subsampling) {
+
+        FQ_SUBSAMPLE ( ch_fastq )
+
+        ch_fastq = FQ_SUBSAMPLE.out.fastq
+
+    }
 
     //
     // MODULE: Run FastQC
@@ -405,6 +435,127 @@ workflow METHYLSEQ {
     }
 
 
+    //
+    // SNP Calling with GATK
+    //
+    if ('gatk' in callers) {
+        
+
+        // requires read groups adding to revelio output
+        PICARD_ADDORREPLACEREADGROUPS (
+            ch_bam_masked,
+            ch_fasta.first(),       // fasta (required by module signature)
+            ch_fasta_index.first()  // fai
+        )
+
+        // index masked bams with RGs
+        SAMTOOLS_INDEX_GATK (
+            PICARD_ADDORREPLACEREADGROUPS.out.bam
+        )
+
+        ch_bai_masked = SAMTOOLS_INDEX_GATK.out.bai
+        
+        PICARD_CREATESEQUENCEDICTIONARY (
+            ch_fasta
+        )
+
+        ch_fasta_dict = PICARD_CREATESEQUENCEDICTIONARY.out.reference_dict
+
+        ch_gatk_inputs = PICARD_ADDORREPLACEREADGROUPS.out.bam
+            .join(ch_bai_masked)
+            .combine(ch_fasta)
+            .combine(ch_fasta_index)
+            .combine(ch_fasta_dict)
+            .multiMap { meta, bam_masked, bai_masked, _meta_fasta, fasta, _meta_fai, fai, _meta_dict, dict ->
+                bam:   [ meta, bam_masked, bai_masked, [], [] ]
+                fasta: [ _meta_fasta, fasta ]
+                fai:   [ _meta_fai, fai ]
+                dict:  [ _meta_dict, dict ]
+            }
+        
+        //
+        // MODULE: gatk haplotypecaller
+        //
+        
+        GATK4_HAPLOTYPECALLER (
+            ch_gatk_inputs.bam,   // [ meta, bam, bai, [], [] ]
+            ch_gatk_inputs.fasta, // [ meta2, fasta ]
+            ch_gatk_inputs.fai,   // [ meta3, fai ]
+            ch_gatk_inputs.dict,  // [ meta4, dict ]
+            [ [:], [] ],          // dbsnp
+            [ [:], [] ]           // dbsnp_tbi
+        )
+
+        ch_sample_vcf = GATK4_HAPLOTYPECALLER.out.vcf
+
+
+        //
+        // MODULE: gatk genomics DB import
+        //
+        ch_intervals = ch_fasta_index
+            .map { meta, fai -> fai }
+            .splitCsv(sep: '\t')
+            .map { row -> row[0] }
+            .filter { !(it in excluded) }
+            .collectFile(name: 'genome.intervals', newLine: true)
+
+        ch_gendb_input = GATK4_HAPLOTYPECALLER.out.vcf
+            .join(GATK4_HAPLOTYPECALLER.out.tbi)
+            .map { meta, vcf, tbi -> [ vcf, tbi ] }
+            .collect()
+            .map { files ->
+                def vcfs = files.collate(2).collect { it[0] }
+                def tbis = files.collate(2).collect { it[1] }
+                [ [id: 'joint'], vcfs, tbis ]
+            }
+            .combine(ch_intervals)
+            .map { meta, vcfs, tbis, intervals ->
+                [ meta, vcfs, tbis, intervals, [], [] ]
+            }
+
+        GATK4_GENOMICSDBIMPORT(
+                ch_gendb_input,
+                false,   // run_intlist
+                false,   // run_updatewspace
+                false    // input_map
+            )
+
+        genotype_input = GATK4_GENOMICSDBIMPORT.out.genomicsdb.map{ 
+            meta, genomicsdb -> [ meta, genomicsdb, [], [], [] ] // add three empty slots so output is ready for genotype gVCFs
+             }
+
+        //
+        // MODULE: gatk genotype gvcfs
+        //
+
+        // Joint genotyping performed using GenotypeGVCFs
+
+           GATK4_GENOTYPEGVCFS(
+                genotype_input,       // [ meta, genomicsdb, [], [], [] ]
+                ch_fasta,             // [ meta2, fasta ]
+                ch_fasta_index,       // [ meta3, fai ]
+                ch_fasta_dict,        // [ meta4, dict ]
+                [ [:], [] ],          // dbsnp
+                [ [:], [] ]           // dbsnp_tbi
+            )
+
+
+        // Sort and merge joint genotype calls 
+
+        // BCFTOOLS_SORT(GATK4_GENOTYPEGVCFS.out.vcf)
+        // ch_joint_vcf  = BCFTOOLS_SORT.out.vcf
+
+        // Merge scatter/gather vcfs & index
+        // Rework meta for variantscalled.csv and annotation tools
+        // GATK4_MERGEVCFS(GATK4_GENOTYPEGVCFS.out.vcf, ch_fasta_dict)
+
+
+
+
+
+    } // end if gatk in callers
+
+
 
     //
     // MODULE: MultiQC
@@ -481,8 +632,11 @@ workflow METHYLSEQ {
     multiqc_report = ch_multiqc_report            // channel: [ path(multiqc_report.html )  ]
     versions       = ch_versions                 // channel: [ path(versions.yml) ]
     bam_calmd      = ch_bam_calmd                // channel: [ val(meta), path(bam) ]
-    bai_calmd      = ch_bai_calmd                // channel: [ val(meta), path(bam) ]
+    bai_calmd      = ch_bai_calmd                // channel: [ val(meta), path(bai) ]
     bam_masked     = ch_bam_masked                // channel: [ val(meta), path(bam) ]
+    bai_masked     = ch_bai_masked               // channel: [ val(meta), path(bai) ]
+    fasta_dict     = ch_fasta_dict               // channel: [ val(meta2), path(dict) ]
+    sample_vcf     = ch_sample_vcf               // channel: [ val(meta), path(vcf.gz) ]
 }
 
 /*
